@@ -1,5 +1,5 @@
 Flask
-mediapipe
-opencv-python-headless
-numpy
 gunicorn
+opencv-python-headles
+numpy
+mediapipe==0.10.14
