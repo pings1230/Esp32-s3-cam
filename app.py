@@ -3,7 +3,6 @@ import numpy as np
 from flask import Flask, request, jsonify
 import mediapipe as mp
 
-# 載入 MediaPipe Hands 模組
 mp_hands = mp.solutions.hands
 
 app = Flask(__name__)
@@ -16,16 +15,13 @@ hands = mp_hands.Hands(
 )
 
 def count_raised_fingers(hand_landmarks):
-    """計算伸直的手指數量"""
     landmarks = hand_landmarks.landmark
-    fingers = []
-
-    # 食指 (8)、中指 (12)、無名指 (16)、小指 (20)
-    fingers.append(1 if landmarks[8].y < landmarks[6].y else 0)
-    fingers.append(1 if landmarks[12].y < landmarks[10].y else 0)
-    fingers.append(1 if landmarks[16].y < landmarks[14].y else 0)
-    fingers.append(1 if landmarks[20].y < landmarks[18].y else 0)
-
+    fingers = [
+        1 if landmarks[8].y < landmarks[6].y else 0,   # 食指
+        1 if landmarks[12].y < landmarks[10].y else 0, # 中指
+        1 if landmarks[16].y < landmarks[14].y else 0, # 無名指
+        1 if landmarks[20].y < landmarks[18].y else 0  # 小指
+    ]
     return sum(fingers)
 
 @app.route('/', methods=['GET'])
@@ -44,14 +40,18 @@ def predict():
         if not img_bytes:
             return jsonify({'error': 'Empty image file'}), 400
 
-        # 將位元組陣列轉換為 uint8
         nparr = np.frombuffer(img_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
         if img is None:
             return jsonify({'error': 'Invalid image format'}), 400
 
-        # 轉為 RGB 格式供 MediaPipe 處理
+        # 💡 關鍵優化：限制影像最大寬度為 320px，避免 Render 512MB RAM 溢出 (502 Error)
+        height, width = img.shape[:2]
+        if width > 320:
+            new_height = int(height * (320 / width))
+            img = cv2.resize(img, (320, new_height), interpolation=cv2.INTER_AREA)
+
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
         results = hands.process(img_rgb)
 
@@ -67,13 +67,11 @@ def predict():
                     command = "BACKWARD"
                 else:
                     command = "STOP"
-        else:
-            command = "STOP"
 
         return jsonify({'command': command})
 
     except Exception as e:
-        print(f"Error processing image: {str(e)}")
+        print(f"Processing error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
