@@ -1,18 +1,23 @@
 import cv2
 import numpy as np
 from flask import Flask, request, jsonify
-import mediapipe as mp
-
-mp_hands = mp.solutions.hands
 
 app = Flask(__name__)
 
-# 初始化手勢辨識模型
-hands = mp_hands.Hands(
-    static_image_mode=True,
-    max_num_hands=1,
-    min_detection_confidence=0.5
-)
+# 全域變數延遲初始化，避免 Gunicorn 啟動時直接死鎖
+hands = None
+
+def get_hands_instance():
+    global hands
+    if hands is None:
+        import mediapipe as mp
+        mp_hands = mp.solutions.hands
+        hands = mp_hands.Hands(
+            static_image_mode=True,
+            max_num_hands=1,
+            min_detection_confidence=0.5
+        )
+    return hands
 
 def count_raised_fingers(hand_landmarks):
     landmarks = hand_landmarks.landmark
@@ -36,24 +41,28 @@ def predict():
 
         file = request.files['image']
         img_bytes = file.read()
-        
+
         if not img_bytes:
             return jsonify({'error': 'Empty image file'}), 400
 
+        # 轉為 OpenCV 影像格式
         nparr = np.frombuffer(img_bytes, np.uint8)
         img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
 
         if img is None:
             return jsonify({'error': 'Invalid image format'}), 400
 
-        # 💡 關鍵優化：限制影像最大寬度為 320px，避免 Render 512MB RAM 溢出 (502 Error)
+        # 💡 關鍵：嚴格強制縮放到極小解析度 (240px)，避免 MediaPipe 計算量過大卡死
         height, width = img.shape[:2]
-        if width > 320:
-            new_height = int(height * (320 / width))
-            img = cv2.resize(img, (320, new_height), interpolation=cv2.INTER_AREA)
+        if width > 240:
+            new_height = int(height * (240 / width))
+            img = cv2.resize(img, (240, new_height), interpolation=cv2.INTER_AREA)
 
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        results = hands.process(img_rgb)
+        
+        # 動態取得 MediaPipe 實例
+        detector = get_hands_instance()
+        results = detector.process(img_rgb)
 
         command = "STOP"
 
@@ -71,7 +80,7 @@ def predict():
         return jsonify({'command': command})
 
     except Exception as e:
-        print(f"Processing error: {str(e)}")
+        print(f"Error: {str(e)}")
         return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
